@@ -1,4 +1,19 @@
 export default async function handler(req, res) {
+  // ================================
+  // CORS
+  // ================================
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, x-heatsoak-key"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   try {
     if (req.method !== "POST") {
       return res.status(405).json({
@@ -16,10 +31,9 @@ export default async function handler(req, res) {
       });
     }
 
-    const {
-      csvText,
-      fileName = "heat_soak.json"
-    } = req.body || {};
+    const body = req.body || {};
+    const csvText = body.csvText;
+    const fileName = body.fileName || "heat_soak.json";
 
     if (!csvText || typeof csvText !== "string") {
       return res.status(400).json({
@@ -54,11 +68,12 @@ export default async function handler(req, res) {
 
     let sha = null;
 
+    // Busca arquivo atual para pegar o SHA
     const getFileResponse = await fetch(`${apiUrl}?ref=${branch}`, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${token}`,
-        "Accept": "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28"
       }
     });
@@ -68,6 +83,7 @@ export default async function handler(req, res) {
       sha = fileInfo.sha;
     } else if (getFileResponse.status !== 404) {
       const erro = await getFileResponse.text();
+
       return res.status(500).json({
         ok: false,
         message: "Erro ao buscar arquivo atual no GitHub.",
@@ -82,18 +98,19 @@ export default async function handler(req, res) {
     const commitBody = {
       message: `Atualiza base Heat Soak - ${new Date().toLocaleString("pt-BR")}`,
       content: contentBase64,
-      branch
+      branch: branch
     };
 
     if (sha) {
       commitBody.sha = sha;
     }
 
+    // Atualiza/cria heat_soak.json no repositório Dashboard
     const updateResponse = await fetch(apiUrl, {
       method: "PUT",
       headers: {
-        "Authorization": `Bearer ${token}`,
-        "Accept": "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
         "X-GitHub-Api-Version": "2022-11-28"
       },
@@ -102,6 +119,7 @@ export default async function handler(req, res) {
 
     if (!updateResponse.ok) {
       const erro = await updateResponse.text();
+
       return res.status(500).json({
         ok: false,
         message: "Erro ao atualizar arquivo no GitHub.",
@@ -125,8 +143,15 @@ export default async function handler(req, res) {
   }
 }
 
+// ========================================================
+// LEITOR CSV
+// Aceita ; , ou TAB
+// Mantém os nomes das colunas iguais ao CSV do SharePoint
+// ========================================================
 function parseCsv(csvText) {
-  const cleanText = csvText.replace(/^\uFEFF/, "").trim();
+  const cleanText = String(csvText || "")
+    .replace(/^\uFEFF/, "")
+    .trim();
 
   if (!cleanText) return [];
 
@@ -137,7 +162,8 @@ function parseCsv(csvText) {
 
   const headers = rows[0].map(normalizeHeader);
 
-  return rows.slice(1)
+  return rows
+    .slice(1)
     .filter(row => row.some(cell => String(cell || "").trim() !== ""))
     .map(row => {
       const obj = {};
@@ -157,8 +183,14 @@ function detectDelimiter(text) {
   const commaCount = (firstLine.match(/,/g) || []).length;
   const tabCount = (firstLine.match(/\t/g) || []).length;
 
-  if (semicolonCount >= commaCount && semicolonCount >= tabCount) return ";";
-  if (tabCount >= commaCount) return "\t";
+  if (semicolonCount >= commaCount && semicolonCount >= tabCount) {
+    return ";";
+  }
+
+  if (tabCount >= commaCount && tabCount >= semicolonCount) {
+    return "\t";
+  }
+
   return ",";
 }
 
@@ -189,7 +221,9 @@ function splitCsvRows(text, delimiter) {
     }
 
     if ((char === "\n" || char === "\r") && !insideQuotes) {
-      if (char === "\r" && nextChar === "\n") i++;
+      if (char === "\r" && nextChar === "\n") {
+        i++;
+      }
 
       row.push(cell);
       rows.push(row);
